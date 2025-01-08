@@ -25,6 +25,9 @@ var wgSigWrongSignature sync.WaitGroup
 // wgSigWrongPublicKey groups goroutines and blocks the caller until all goroutines finish.
 var wgSigWrongPublicKey sync.WaitGroup
 
+// wgSigWithCtxCorrectness groups goroutines and blocks the caller until all goroutines finish.
+var wgSigWithCtxCorrectness sync.WaitGroup
+
 // testSigCorrectness tests a specific signature.
 func testSigCorrectness(sigName string, msg []byte, threading bool, t *testing.T) {
 	log.Println("Correctness - ", sigName) // thread-safe
@@ -87,6 +90,27 @@ func testSigWrongPublicKey(sigName string, msg []byte, threading bool, t *testin
 	if isValid {
 		// t.Errorf is thread-safe
 		t.Errorf(sigName + ": signature verification should have failed")
+	}
+}
+
+// testSigWithCtxCorrectness tests a specific signature with context.
+func testSigWithCtxCorrectness(sigName string, msg, ctx []byte, threading bool, t *testing.T) {
+	log.Println("Correctness with ctx - ", sigName) // thread-safe
+	if threading == true {
+		defer wgSigWithCtxCorrectness.Done()
+	}
+	var signer, verifier oqs.Signature
+	defer signer.Clean()
+	defer verifier.Clean()
+	// Ignore potential errors everywhere
+	_ = signer.Init(sigName, nil)
+	_ = verifier.Init(sigName, nil)
+	pubKey, _ := signer.GenerateKeyPair()
+	signature, _ := signer.SignWithCtxStr(msg, ctx)
+	isValid, _ := verifier.VerifyWithCtxStr(msg, signature, ctx, pubKey)
+	if !isValid {
+		// t.Errorf is thread-safe
+		t.Errorf(sigName + ": signature verification with ctx failed")
 	}
 }
 
@@ -217,4 +241,38 @@ func TestUnsupportedSignature(t *testing.T) {
 	if err := signer.Init("unsupported_sig", nil); err == nil {
 		t.Fatal("Unsupported signature should have emitted an error")
 	}
+}
+
+// TestSignatureWithContextCorrectness tests all signatures with context support.
+func TestSignatureWithContextCorrectness(t *testing.T) {
+	sigWithCtxPatterns := []string{"ML-DSA-44", "ML-DSA-65", "ML-DSA-87"}
+
+	msg := []byte("This is our favourite message to sign")
+	ctx := []byte("This is the signature context")
+	// First test sigs that belong to noThreadSigPatterns[] in the main
+	// goroutine, due to issues with stack size being too small in macOS or
+	// Windows
+	cnt := 0
+	for _, sigName := range sigWithCtxPatterns {
+		if stringMatchSlice(sigName, disabledSigPatterns) {
+			cnt++
+			continue
+		}
+		// Issues with stack size being too small
+		if stringMatchSlice(sigName, noThreadSigPatterns) {
+			cnt++
+			testSigWithCtxCorrectness(sigName, msg, ctx, false, t)
+		}
+	}
+	// Test the remaining sigs in separate goroutines
+	wgSigWithCtxCorrectness.Add(len(sigWithCtxPatterns) - cnt)
+	for _, sigName := range sigWithCtxPatterns {
+		if stringMatchSlice(sigName, disabledSigPatterns) {
+			continue
+		}
+		if !stringMatchSlice(sigName, noThreadSigPatterns) {
+			go testSigWithCtxCorrectness(sigName, msg, ctx, true, t)
+		}
+	}
+	wgSigWithCtxCorrectness.Wait()
 }
