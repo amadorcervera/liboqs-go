@@ -449,6 +449,64 @@ func (sig *Signature) Verify(message []byte, signature []byte,
 	return true, nil
 }
 
+// SignWithCtxStr signs a message using the context and returns the corresponding signature.
+func (sig *Signature) SignWithCtxStr(message, ctx []byte) ([]byte, error) {
+	if len(sig.secretKey) != sig.algDetails.LengthSecretKey {
+		return nil, errors.New("incorrect secret key length, make sure you " +
+			"specify one in Init() or run GenerateKeyPair()")
+	}
+
+	lenCtx := len(ctx)
+	if lenCtx > 255 || lenCtx == 0 {
+		return nil, errors.New("incorrect context length")
+	}
+
+	signature := make([]byte, sig.algDetails.MaxLengthSignature)
+	var lenSig uint64
+	rv := C.OQS_SIG_sign_with_ctx_str(sig.sig,
+		(*C.uint8_t)(unsafe.Pointer(&signature[0])), (*C.size_t)(unsafe.Pointer(&lenSig)),
+		(*C.uint8_t)(unsafe.Pointer(&message[0])), C.size_t(len(message)),
+		(*C.uint8_t)(unsafe.Pointer(&ctx[0])), C.size_t(lenCtx),
+		(*C.uint8_t)(unsafe.Pointer(&sig.secretKey[0])))
+
+	if rv != C.OQS_SUCCESS {
+		return nil, errors.New("can not sign message")
+	}
+
+	return signature[:lenSig], nil
+}
+
+// VerifyWithCtxStr verifies the validity of a signed message using the context, returning
+// true if the signature is valid, and false otherwise.
+func (sig *Signature) VerifyWithCtxStr(message []byte, signature []byte, ctx []byte,
+	publicKey []byte,
+) (bool, error) {
+	if len(publicKey) != sig.algDetails.LengthPublicKey {
+		return false, errors.New("incorrect public key length")
+	}
+
+	if len(signature) > sig.algDetails.MaxLengthSignature {
+		return false, errors.New("incorrect signature size")
+	}
+
+	lenCtx := len(ctx)
+	if lenCtx > 255 || lenCtx == 0 {
+		return false, errors.New("incorrect context length")
+	}
+
+	rv := C.OQS_SIG_verify_with_ctx_str(sig.sig,
+		(*C.uint8_t)(unsafe.Pointer(&message[0])), C.size_t(len(message)),
+		(*C.uint8_t)(unsafe.Pointer(&signature[0])), C.size_t(len(signature)),
+		(*C.uint8_t)(unsafe.Pointer(&ctx[0])), C.size_t(lenCtx),
+		(*C.uint8_t)(unsafe.Pointer(&publicKey[0])))
+
+	if rv != C.OQS_SUCCESS {
+		return false, nil
+	}
+
+	return true, nil
+}
+
 // Clean zeroes-in the stored secret key and resets the sig receiver. One can
 // reuse the signature by re-initializing it with the Signature.Init method.
 func (sig *Signature) Clean() {
